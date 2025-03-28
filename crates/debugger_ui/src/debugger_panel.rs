@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, DebugAdapterConfig,
-    LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
 };
 use futures::{channel::mpsc, SinkExt as _};
 use gpui::{
@@ -19,12 +19,13 @@ use project::{
 use rpc::proto::{self};
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    pane, ClearBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
+    pane, ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
     StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
@@ -52,7 +53,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
-    pub(crate) last_inert_config: Option<DebugAdapterConfig>,
+    pub(crate) last_inert_config: Option<DebugTaskDefinition>,
 }
 
 impl DebugPanel {
@@ -174,7 +175,7 @@ impl DebugPanel {
             workspace.update_in(cx, |workspace, window, cx| {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
-                workspace.register_action(|workspace, _: &ClearBreakpoints, _, cx| {
+                workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
                         cx,
                         |breakpoint_store, cx| {

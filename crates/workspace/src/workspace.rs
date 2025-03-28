@@ -14,6 +14,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
+use dap::DapRegistry;
 pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
@@ -65,7 +66,8 @@ use persistence::{
 };
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    debugger::breakpoint_store::BreakpointStoreEvent, DirectoryLister, Project, ProjectEntryId,
+    ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
@@ -141,7 +143,7 @@ actions!(
         StepBack,
         Stop,
         ToggleIgnoreBreakpoints,
-        ClearBreakpoints
+        ClearAllBreakpoints
     ]
 );
 
@@ -181,6 +183,7 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        RestoreBanner,
     ]
 );
 
@@ -635,6 +638,7 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub workspace_store: Entity<WorkspaceStore>,
@@ -686,6 +690,7 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let debug_adapters = Arc::new(DapRegistry::fake());
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
@@ -701,6 +706,7 @@ impl AppState {
             client,
             fs,
             languages,
+            debug_adapters,
             user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),
@@ -974,6 +980,17 @@ impl Workspace {
         })
         .detach();
 
+        cx.subscribe_in(
+            &project.read(cx).breakpoint_store(),
+            window,
+            |workspace, _, evt, window, cx| {
+                if let BreakpointStoreEvent::BreakpointsUpdated(_, _) = evt {
+                    workspace.serialize_workspace(window, cx);
+                }
+            },
+        )
+        .detach();
+
         cx.on_focus_lost(window, |this, window, cx| {
             let focus_handle = this.focus_handle(cx);
             window.focus(&focus_handle);
@@ -1184,6 +1201,7 @@ impl Workspace {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
+            app_state.debug_adapters.clone(),
             app_state.fs.clone(),
             env,
             cx,
@@ -2509,8 +2527,14 @@ impl Workspace {
             let was_visible = dock.is_open() && !other_is_zoomed;
             dock.set_open(!was_visible, window, cx);
 
-            if dock.active_panel().is_none() && dock.panels_len() > 0 {
-                dock.activate_panel(0, window, cx);
+            if dock.active_panel().is_none() {
+                let Some(panel_ix) = dock
+                    .first_enabled_panel_idx(cx)
+                    .log_with_level(log::Level::Info)
+                else {
+                    return;
+                };
+                dock.activate_panel(panel_ix, window, cx);
             }
 
             if let Some(active_panel) = dock.active_panel() {
@@ -5006,6 +5030,7 @@ impl Workspace {
         window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
+            debug_adapters: project.read(cx).debug_adapters().clone(),
             workspace_store,
             client,
             user_store,
@@ -6689,7 +6714,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            &hitbox,
+                            Some(&hitbox),
                         );
                     },
                 )

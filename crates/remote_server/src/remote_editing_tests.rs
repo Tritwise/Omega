@@ -4,6 +4,7 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
@@ -483,7 +484,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
             ..Default::default()
@@ -514,7 +515,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         vec!["boop".to_string()]
     );
 
-    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
@@ -1445,6 +1446,7 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1457,6 +1459,7 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
+                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,

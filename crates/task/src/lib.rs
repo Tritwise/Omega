@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType,
-    DebugRequestType, DebugTaskDefinition, DebugTaskFile, TCPHost,
+    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
+    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
 pub use task_template::{
     HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
@@ -104,14 +104,20 @@ impl ResolvedTask {
     }
 
     /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskDefinition> {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
             TaskType::Debug(mut adapter_config) => {
                 if let Some(resolved) = &self.resolved {
                     adapter_config.label = resolved.label.clone();
-                    adapter_config.program = resolved.program.clone().or(adapter_config.program);
-                    adapter_config.cwd = resolved.cwd.clone().or(adapter_config.cwd);
+                    if let DebugRequestType::Launch(ref mut launch) = adapter_config.request {
+                        if let Some(program) = resolved.program.clone() {
+                            launch.program = program;
+                        }
+                        if let Some(cwd) = resolved.cwd.clone() {
+                            launch.cwd = Some(cwd);
+                        }
+                    }
                 }
 
                 Some(adapter_config)
@@ -434,8 +440,10 @@ impl ShellBuilder {
 
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+    // We could use `util::retrieve_system_shell()` here, but we are running tasks here, so leave it to `powershell.exe`
+    // should be okay.
     fn system_shell() -> String {
-        "powershell".to_owned()
+        "powershell.exe".to_string()
     }
 
     fn to_windows_shell_variable(&self, input: String) -> String {
